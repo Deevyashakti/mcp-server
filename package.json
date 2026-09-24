@@ -8,7 +8,7 @@
     "dev:backend": "npm run dev --prefix backend",
     "build": "npm run build --prefix frontend",
     "build:frontend": "npm run build --prefix frontend",
-    "install:all": "npm install --prefix frontend && npm install --prefix backend",
+    "install:all": "npm install --include=dev --prefix frontend && npm install --prefix backend",
     "test": "node -e \"console.log('No tests yet'); process.exit(0);\""
   },
   "engines": {
