@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:5001";
+// Same-origin by default (Vite proxy locally, Vercel /api serverless in prod).
+// Set VITE_API_URL only if the API is hosted on a different domain.
+const API = import.meta.env.VITE_API_URL ?? "";
 const TOKEN_KEY = "divos-chat-token";
 
 const WELCOME = {
@@ -51,7 +53,9 @@ function Login({ onLogin }) {
       onLogin(data.token, data.user);
     } catch (err) {
       setError(
-        err.message === "Failed to fetch" ? "Backend not reachable on port 5001" : err.message
+        err.message === "Failed to fetch"
+          ? "Backend not reachable — is the API running?"
+          : err.message
       );
     } finally {
       setLoading(false);

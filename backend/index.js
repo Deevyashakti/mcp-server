@@ -14,7 +14,31 @@ const agent = require("./agent");
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-app.use(cors());
+const corsOrigins = String(process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Same-origin / server-to-server / local tools (no Origin header)
+      if (!origin) return callback(null, true);
+      if (corsOrigins.length === 0) return callback(null, true);
+      if (corsOrigins.includes(origin)) return callback(null, true);
+      try {
+        const host = new URL(origin).hostname;
+        if (host === "localhost" || host.endsWith(".vercel.app")) {
+          return callback(null, true);
+        }
+      } catch {
+        /* ignore invalid Origin */
+      }
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 function mongoHostLabel() {
@@ -156,17 +180,26 @@ app.post("/api/chat", auth.requireAuth, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`API running on http://localhost:${PORT}`);
-  console.log(
-    mongo.mongoConfigured()
-      ? "MongoDB: configured"
-      : "MongoDB: not configured — set MONGODB_URI and MONGODB_DB"
-  );
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn("ANTHROPIC_API_KEY: missing — chat will not work until it is set");
-  }
-  if (String(process.env.JWT_SECRET || "").length < 32) {
-    console.warn("JWT_SECRET: missing or shorter than 32 characters — login will not work");
-  }
-});
+function startLocal() {
+  app.listen(PORT, () => {
+    console.log(`API running on http://localhost:${PORT}`);
+    console.log(
+      mongo.mongoConfigured()
+        ? "MongoDB: configured"
+        : "MongoDB: not configured — set MONGODB_URI and MONGODB_DB"
+    );
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.warn("ANTHROPIC_API_KEY: missing — chat will not work until it is set");
+    }
+    if (String(process.env.JWT_SECRET || "").length < 32) {
+      console.warn("JWT_SECRET: missing or shorter than 32 characters — login will not work");
+    }
+  });
+}
+
+// Vercel imports this file as a serverless handler; only listen when run directly.
+if (require.main === module) {
+  startLocal();
+}
+
+module.exports = app;
