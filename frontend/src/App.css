@@ -64,6 +64,7 @@
 .login-card h1 {
   margin: 0;
   font-size: 22px;
+  color: #f3f4f6;
 }
 
 .login-card p {
@@ -94,6 +95,51 @@
 .login-card button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #2e303a;
+}
+
+.google-button {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.login-card .otp-input {
+  text-align: center;
+  font-size: 22px;
+  letter-spacing: 8px;
+}
+
+.login-links {
+  display: flex;
+  justify-content: space-between;
+}
+
+.login-card .link-button {
+  background: none;
+  padding: 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.login-card .link-button:hover:not(:disabled) {
+  color: #ececf1;
+  text-decoration: underline;
 }
 
 .login-error {

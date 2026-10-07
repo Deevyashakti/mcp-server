@@ -12,7 +12,7 @@ const access = require("./access");
 const agent = require("./agent");
 
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5050;
 
 const corsOrigins = String(process.env.CORS_ORIGINS || "")
   .split(",")
@@ -109,16 +109,28 @@ function mongoErrorHint(err) {
   return ` Cannot reach MongoDB at ${mongoHostLabel()} from this machine. Open port 27017 on that server for this machine's IP, use a VPN/SSH tunnel, or run the backend on the database server.`;
 }
 
-app.post("/api/login", async (req, res) => {
-  try {
-    const result = await auth.login(req.body?.email, req.body?.password, req.ip);
-    return res.json(result);
-  } catch (err) {
-    const status = err.status || 500;
-    return res
-      .status(status)
-      .json({ error: status === 500 ? `Login failed: ${err.message}.${mongoErrorHint(err)}` : err.message });
-  }
+function loginRoute(handler) {
+  return async (req, res) => {
+    try {
+      return res.json(await handler(req));
+    } catch (err) {
+      const status = err.status || 500;
+      return res
+        .status(status)
+        .json({ error: status === 500 ? `Login failed: ${err.message}.${mongoErrorHint(err)}` : err.message });
+    }
+  };
+}
+
+app.post("/api/login/otp/request", loginRoute((req) => auth.requestOtp(req.body?.email, req.ip)));
+app.post(
+  "/api/login/otp/verify",
+  loginRoute((req) => auth.verifyOtp(req.body?.challenge, req.body?.code, req.ip))
+);
+app.post("/api/login/google", loginRoute((req) => auth.googleLogin(req.body?.credential, req.ip)));
+
+app.get("/api/auth/config", (req, res) => {
+  res.json({ googleClientId: auth.googleClientId() || null });
 });
 
 app.get("/api/me", auth.requireAuth, (req, res) => {
@@ -181,7 +193,12 @@ app.post("/api/chat", auth.requireAuth, async (req, res) => {
 });
 
 function startLocal() {
-  app.listen(PORT, () => {
+  // Express 5 passes listen errors (e.g. port in use) to this callback instead of throwing.
+  app.listen(PORT, (err) => {
+    if (err) {
+      console.error(`Could not start API on port ${PORT}: ${err.message}`);
+      process.exit(1);
+    }
     console.log(`API running on http://localhost:${PORT}`);
     console.log(
       mongo.mongoConfigured()
