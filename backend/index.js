@@ -39,7 +39,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
 
 function mongoHostLabel() {
   return mongo.mongoHost(mongo.mongoUri());
@@ -172,16 +172,42 @@ app.get("/api/truck-planning", auth.requireAuth, async (req, res) => {
   }
 });
 
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+function readImage(body) {
+  if (!body?.image) return null;
+  const mediaType = String(body.image.mediaType || "");
+  const data = String(body.image.data || "").replace(/\s/g, "");
+  if (!IMAGE_TYPES.has(mediaType) || !/^[A-Za-z0-9+/=]+$/.test(data)) {
+    const err = new Error("Use a JPG, PNG, WEBP, or GIF image.");
+    err.status = 400;
+    throw err;
+  }
+  if (data.length > 5_000_000) {
+    const err = new Error("That image is too large. Keep it under 3.5 MB.");
+    err.status = 413;
+    throw err;
+  }
+  return { mediaType, data };
+}
+
 app.post("/api/chat", auth.requireAuth, async (req, res) => {
-  const message = String(req.body?.message || "").trim().slice(0, 4000);
   const sessionId = String(req.body?.sessionId || "default").slice(0, 100);
-  if (!message) {
+  let message = String(req.body?.message || "").trim().slice(0, 4000);
+  let image = null;
+  try {
+    image = readImage(req.body);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+  if (!message && !image) {
     return res.status(400).json({ error: "message is required" });
   }
+  if (!message) message = "Read this image.";
 
   try {
-    const reply = await agent.ask(req.user, sessionId, message);
-    logChat({ email: req.user.email, sessionId, question: message, reply });
+    const reply = await agent.ask(req.user, sessionId, message, image);
+    logChat({ email: req.user.email, sessionId, question: message, image: Boolean(image), reply });
     return res.json({ reply });
   } catch (err) {
     console.error("Chat error:", err);

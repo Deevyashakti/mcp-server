@@ -5,6 +5,7 @@ let client;
 let db;
 let connectedUri = "";
 let connectError = null;
+let connecting = null;
 
 function loadEnv() {
   require("dotenv").config({
@@ -71,18 +72,24 @@ async function getDb() {
   }
 
   if (db && connectedUri === uri) return db;
-  await closeClient();
-
-  client = new MongoClient(uri, {
-    maxPoolSize: 5,
-    serverSelectionTimeoutMS: 10000,
-    connectTimeoutMS: 10000,
-  });
-  await client.connect();
-  db = client.db(name);
-  connectedUri = uri;
-  connectError = null;
-  return db;
+  if (!connecting) {
+    connecting = (async () => {
+      await closeClient();
+      client = new MongoClient(uri, {
+        maxPoolSize: 5,
+        serverSelectionTimeoutMS: 10000,
+        connectTimeoutMS: 10000,
+      });
+      await client.connect();
+      db = client.db(name);
+      connectedUri = uri;
+      connectError = null;
+      return db;
+    })().finally(() => {
+      connecting = null;
+    });
+  }
+  return connecting;
 }
 
 async function listCollections() {

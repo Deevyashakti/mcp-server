@@ -49,7 +49,12 @@ How to work:
 - Prefer count_documents or aggregate for "how many / total / group by" questions instead of fetching documents.
 - Base every answer only on tool results. If the data isn't there, or you don't have access, say so plainly. Never invent numbers or records.
 - If the question is genuinely ambiguous (e.g. which date range), make a sensible assumption, state it in one line, and answer.
-- Reply in the user's language. Keep answers short and clear: the answer first, then key details. Use simple lists or tables for multiple records. Don't show raw MongoDB queries or internal ids unless asked.
+- Reply in the user's language. Keep answers short and clear: one short sentence first, then the data. Don't show raw MongoDB queries or internal ids unless asked.
+- When the answer has counts, totals, amounts, comparisons, or more than one record, put the numbers in a markdown table, not a bullet list. Keep column names short. Example:
+| Truck | Status | Count |
+| --- | --- | --- |
+| GJ01AB1234 | Pending | 4 |
+- If the user attaches an image, read what is actually in it (a document, screenshot, or photo). When it refers to company data, look that up with the tools. Don't invent text that isn't visible.
 - Dates in filters must be Extended JSON: {"$date": "2026-01-31T00:00:00Z"}. ObjectIds: {"$oid": "..."}.
 
 Today's date: ${today}
@@ -136,7 +141,16 @@ function textOf(message) {
   return "";
 }
 
-async function ask(user, sessionId, question) {
+async function ask(user, sessionId, question, image) {
+  const blocks = [];
+  if (question) blocks.push({ type: "text", text: question });
+  if (image) {
+    blocks.push({
+      type: "image_url",
+      image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+    });
+  }
+  const content = blocks.length === 1 && blocks[0].type === "text" ? question : blocks;
   const agent = createAgent({
     model: getModel(),
     tools: buildTools(user),
@@ -144,7 +158,7 @@ async function ask(user, sessionId, question) {
     checkpointer: memory,
   });
   const result = await agent.invoke(
-    { messages: [{ role: "user", content: question }] },
+    { messages: [{ role: "user", content }] },
     {
       // Scoped to the user so nobody can read another person's chat history.
       configurable: { thread_id: `${user._id}:${sessionId}` },
