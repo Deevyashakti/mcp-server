@@ -92,6 +92,11 @@ async function getDb() {
   return connecting;
 }
 
+async function getClient() {
+  await getDb();
+  return client;
+}
+
 async function listCollections() {
   const database = await getDb();
   return database.listCollections().toArray();
@@ -221,7 +226,9 @@ module.exports = {
   mongoConfigured,
   mongoHost,
   mongoUri,
+  mongoDbName,
   getDb,
+  getClient,
   pingMongo,
   getTruckPlanning,
   getOverview,

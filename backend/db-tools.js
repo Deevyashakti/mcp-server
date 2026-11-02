@@ -23,6 +23,26 @@ const CROSS_COLLECTION_STAGES = new Set(["$lookup", "$graphLookup", "$unionWith"
 
 const SENSITIVE_FIELD = /password|passwd|^pwd$|^pass$|token|secret|^otp|hash|salt|api_?key/i;
 
+const WRITE_REPLY =
+  "This assistant is read-only. It cannot create, edit, update, approve, or delete DivOS records. Nothing was changed. Make that change in DivOS.";
+
+// A question that asks to change a record, not a question about existing data.
+function writeRefusal(message) {
+  const text = String(message || "").trim();
+  if (!text) return null;
+  if (/^(how|what|which|who|when|where|why|kitne|kya|kaun|kab|show|list|count|find|get|tell)\b/i.test(text)) {
+    return null;
+  }
+  const asksToChange =
+    /\b(edit|update|delete|remove|change|modify|insert|create|add|approve|reject|cancel|mark|overwrite|drop|rename|dispatch|badlo|hatao|banao)\b/i.test(
+      text
+    );
+  const namesARecord = /\b(order|truck|trip|plan|leave|stock|status|record|document|user|it|this|that|them|ise|isko)\b/i.test(
+    text
+  );
+  return asksToChange && namesARecord ? WRITE_REPLY : null;
+}
+
 function assertSafe(value, { allowCrossCollection }) {
   // "$password" style field references inside aggregation expressions
   if (typeof value === "string" && value.startsWith("$")) {
@@ -202,4 +222,5 @@ module.exports = {
   aggregate,
   toText,
   redact,
+  writeRefusal,
 };

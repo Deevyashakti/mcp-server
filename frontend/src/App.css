@@ -169,8 +169,7 @@
 }
 
 .google-button {
-  display: flex;
-  justify-content: center;
+  width: 100%;
   min-height: 44px;
 }
 
@@ -527,6 +526,81 @@
   margin-top: 12px;
 }
 
+.source-line {
+  color: #9a9a9a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.flag-btn {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #9a9a9a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.flag-btn:hover:not(:disabled) {
+  color: #ececec;
+}
+
+.flag-btn.done {
+  cursor: default;
+}
+
+.message-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.message-actions .flag-btn {
+  margin-top: 0;
+}
+
+.review-heading {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.review-check,
+.review-note {
+  margin: 0 0 12px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.review-list li {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #334155;
+}
+
+.review-list strong {
+  display: block;
+}
+
+.review-list span,
+.review-list p {
+  margin: 2px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
 .table-wrap {
   overflow-x: auto;
   margin: 4px 0;
@@ -773,6 +847,10 @@
   border-radius: 16px;
   background: #2a2a2a;
   color: #ececec;
+}
+
+.modal.wide {
+  width: min(560px, 100%);
 }
 
 .modal header {

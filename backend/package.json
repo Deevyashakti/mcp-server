@@ -17,6 +17,7 @@
     "@langchain/anthropic": "^1.5.11",
     "@langchain/core": "^1.2.12",
     "@langchain/langgraph": "^1.4.17",
+    "@langchain/langgraph-checkpoint-mongodb": "^1.5.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",

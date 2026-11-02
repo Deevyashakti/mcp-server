@@ -8,6 +8,9 @@ const API_TARGET = 'http://localhost:5050'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Port 3000 matches DivOS, which this Google client already allows.
+    port: 3000,
+    strictPort: true,
     proxy: {
       '/api': API_TARGET,
       '/health': API_TARGET,

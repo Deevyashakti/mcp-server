@@ -9,7 +9,10 @@ const cors = require("cors");
 const mongo = require("./mongo");
 const auth = require("./auth");
 const access = require("./access");
+const dbTools = require("./db-tools");
 const agent = require("./agent");
+const office = require("./office");
+const checks = require("./checks");
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -137,6 +140,60 @@ app.get("/api/me", auth.requireAuth, (req, res) => {
   res.json({ user: { name: req.user.name, email: req.user.email, role: req.user.role } });
 });
 
+app.get("/api/chats", auth.requireAuth, async (req, res) => {
+  try {
+    return res.json(await office.loadWorkspace(req.user._id));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/chats", auth.requireAuth, async (req, res) => {
+  try {
+    await office.saveWorkspace(req.user._id, req.body?.chats, req.body?.openChatId);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/chat/flag", auth.requireAuth, async (req, res) => {
+  try {
+    await office.recordQuestion({
+      user: req.user,
+      sessionId: req.body?.sessionId,
+      question: req.body?.question,
+      reply: req.body?.reply,
+      collections: [],
+      flagged: true,
+    });
+    logChat({ email: req.user.email, sessionId: req.body?.sessionId, question: req.body?.question, flagged: true });
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/reviews", auth.requireAuth, async (req, res) => {
+  if (!access.isAdmin(req.user)) {
+    return res.status(403).json({ error: "Admins only." });
+  }
+  try {
+    const db = await mongo.getDb();
+    const flags = await db
+      .collection(office.LOGS)
+      .find({ flagged: true })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .project({ name: 1, email: 1, role: 1, question: 1, reply: 1, collections: 1, createdAt: 1 })
+      .toArray();
+    const daily = await checks.recentChecks();
+    return res.json({ flags, daily });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/health", async (req, res) => {
   const mongoStatus = await mongo.pingMongo();
   res.json({
@@ -205,13 +262,52 @@ app.post("/api/chat", auth.requireAuth, async (req, res) => {
   }
   if (!message) message = "Read this image.";
 
+  const refusal = dbTools.writeRefusal(message);
+  if (refusal) {
+    logChat({ email: req.user.email, sessionId, question: message, reply: refusal, readOnly: true });
+    office
+      .recordQuestion({
+        user: req.user,
+        sessionId,
+        question: message,
+        collections: [],
+        reply: refusal,
+      })
+      .catch((err) => console.error("Could not write question record:", err.message));
+    return res.json({ reply: refusal });
+  }
+
   try {
-    const reply = await agent.ask(req.user, sessionId, message, image);
-    logChat({ email: req.user.email, sessionId, question: message, image: Boolean(image), reply });
+    const result = await agent.ask(req.user, sessionId, message, image);
+    const reply = result.failed
+      ? result.reply
+      : office.withSource(message, result.reply, result.collections);
+    logChat({
+      email: req.user.email,
+      sessionId,
+      question: message,
+      collections: result.collections,
+      image: Boolean(image),
+      reply,
+    });
+    office.recordQuestion({
+      user: req.user,
+      sessionId,
+      question: message,
+      collections: result.collections,
+      reply,
+    }).catch((err) => console.error("Could not write question record:", err.message));
     return res.json({ reply });
   } catch (err) {
     console.error("Chat error:", err);
     logChat({ email: req.user.email, sessionId, question: message, error: err.message });
+    office.recordQuestion({
+      user: req.user,
+      sessionId,
+      question: message,
+      collections: [],
+      error: err.message,
+    }).catch(() => {});
     return res.status(500).json({
       reply: `Sorry, something went wrong: ${err.message}.${mongoErrorHint(err)}`,
     });
@@ -237,6 +333,7 @@ function startLocal() {
     if (String(process.env.JWT_SECRET || "").length < 32) {
       console.warn("JWT_SECRET: missing or shorter than 32 characters — login will not work");
     }
+    if (mongo.mongoConfigured()) checks.start();
   });
 }
 

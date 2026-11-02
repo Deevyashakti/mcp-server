@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import "./App.css";
 
 // Same-origin by default (Vite proxy locally, Vercel /api serverless in prod).
@@ -177,18 +178,21 @@ function Login({ onLogin }) {
     let cancelled = false;
     loadGoogleScript()
       .then(() => {
-        if (cancelled || !googleButtonRef.current) return;
+        const el = googleButtonRef.current;
+        if (cancelled || !el) return;
         window.google.accounts.id.initialize({
           client_id: googleClientId,
           callback: (resp) =>
             requestLoginRef.current("/api/login/google", { credential: resp.credential }),
         });
-        window.google.accounts.id.renderButton(googleButtonRef.current, {
+        el.replaceChildren();
+        const width = Math.min(400, Math.max(200, Math.floor(el.clientWidth)));
+        window.google.accounts.id.renderButton(el, {
           theme: "outline",
           size: "large",
           text: "signin_with",
           shape: "rectangular",
-          width: 324,
+          width,
         });
       })
       .catch((err) => !cancelled && setError(err.message));
@@ -284,8 +288,43 @@ function Login({ onLogin }) {
 const PROMPTS = [
   "How many trucks are pending?",
   "Kitne orders aaj aaye?",
+  "Who is on leave today?",
   "Show the latest truck plan",
 ];
+
+function canReview(user) {
+  return ["admin", "owner", "function head"].includes(String(user?.role || "").toLowerCase());
+}
+
+function downloadExcel(text, title) {
+  const tables = messageBlocks(text).filter((block) => block.type === "table");
+  if (!tables.length) return;
+  const book = XLSX.utils.book_new();
+  tables.forEach((table, index) => {
+    const sheet = XLSX.utils.aoa_to_sheet([table.headers, ...table.rows]);
+    XLSX.utils.book_append_sheet(book, sheet, tables.length === 1 ? "Data" : `Data ${index + 1}`);
+  });
+  const safe = String(title || "divos-data").replace(/[^\w -]+/g, "").trim().slice(0, 40) || "divos-data";
+  XLSX.writeFile(book, `${safe}.xlsx`);
+}
+
+function mergeChats(local, remote) {
+  const map = new Map();
+  for (const chat of [...(remote || []), ...(local || [])]) {
+    if (!chat?.id) continue;
+    const prev = map.get(chat.id);
+    if (!prev) {
+      map.set(chat.id, chat);
+      continue;
+    }
+    const newer =
+      (chat.updatedAt || 0) > (prev.updatedAt || 0) ||
+      ((chat.updatedAt || 0) === (prev.updatedAt || 0) &&
+        (chat.messages?.length || 0) >= (prev.messages?.length || 0));
+    if (newer) map.set(chat.id, chat);
+  }
+  return [...map.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 40);
+}
 
 function chatsKey(email) {
   return `${CHATS_KEY}:${String(email || "").trim().toLowerCase()}`;
@@ -374,12 +413,17 @@ function App() {
   const [listening, setListening] = useState(false);
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reviews, setReviews] = useState(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const fileRef = useRef(null);
   const accountRef = useRef(null);
   const recognitionRef = useRef(null);
   const voiceText = useRef("");
+  const chatsReady = useRef(false);
+  const editStamp = useRef(0);
+  const chatsRef = useRef(chats);
+  chatsRef.current = chats;
 
   function flash(text) {
     setToast(text);
@@ -406,7 +450,20 @@ function App() {
     setSessionId(newSessionId());
   }
 
+  function saveRemote(next, openId) {
+    if (!token || !chatsReady.current) return;
+    fetch(`${API}/api/chats`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ chats: next, openChatId: openId || "" }),
+    }).catch(() => {});
+  }
+
   function remember(id, nextMessages) {
+    editStamp.current += 1;
     const stored = nextMessages.map((message) => {
       const copy = { ...message };
       delete copy.imagePreview;
@@ -423,19 +480,59 @@ function App() {
         ...prev.filter((chat) => chat.id !== id),
       ].slice(0, 40);
       writeChats(next, user?.email);
+      saveRemote(next, id);
       return next;
     });
   }
 
   useEffect(() => {
-    if (!user?.email) return;
-    const saved = readChats(user.email);
-    setChats(saved);
-    const chat = saved.find((item) => item.id === readOpenChat(user.email));
-    if (!chat) return;
-    setSessionId(chat.id);
-    setMessages(chat.messages);
-  }, [user?.email]);
+    if (!user?.email || !token) return;
+    let cancelled = false;
+    chatsReady.current = false;
+    const stamp = editStamp.current;
+    const local = readChats(user.email);
+    setChats(local);
+    const localOpen = readOpenChat(user.email);
+    const localChat = local.find((item) => item.id === localOpen);
+    if (localChat) {
+      setSessionId(localChat.id);
+      setMessages(localChat.messages);
+    }
+    fetch(`${API}/api/chats`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const remote = data?.chats || [];
+        if (editStamp.current !== stamp) {
+          chatsReady.current = true;
+          const kept = mergeChats(chatsRef.current, remote);
+          writeChats(kept, user.email);
+          setChats(kept);
+          saveRemote(kept, readOpenChat(user.email));
+          return;
+        }
+        const merged = mergeChats(local, remote);
+        writeChats(merged, user.email);
+        const openId = data?.openChatId || localOpen;
+        const chat = merged.find((item) => item.id === openId);
+        chatsReady.current = true;
+        if (chat) {
+          setSessionId(chat.id);
+          setMessages(chat.messages);
+          writeOpenChat(user.email, chat.id);
+        }
+        setChats(merged);
+        const unchanged =
+          JSON.stringify(merged) === JSON.stringify(remote) && (data?.openChatId || "") === (chat?.id || "");
+        if (!unchanged) saveRemote(merged, chat?.id || openId);
+      })
+      .catch(() => {
+        if (!cancelled) chatsReady.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.email, token]);
 
   useEffect(() => {
     if (user?.email && sessionId) writeOpenChat(user.email, sessionId);
@@ -467,6 +564,22 @@ function App() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (menu !== "reviews" || !token) return;
+    let cancelled = false;
+    fetch(`${API}/api/reviews`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled) setReviews(data);
+      })
+      .catch(() => {
+        if (!cancelled) setReviews(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [menu, token]);
 
   function handleLogin(newToken, newUser) {
     saveToken(newToken);
@@ -575,7 +688,7 @@ function App() {
         return snapshot;
       });
       remember(chatId, snapshot);
-      if (settings.speak) speakText(reply, settings.lang);
+      if (settings.speak) speakText(reply.replace(/\n+Source:[\s\S]*$/, ""), settings.lang);
     } catch (err) {
       setMessages((prev) => {
         snapshot = [
@@ -588,6 +701,31 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function flagAnswer(index) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant" || message.flagged) return;
+    const question =
+      [...messages.slice(0, index)].reverse().find((item) => item.role === "user")?.text || "";
+    try {
+      const res = await fetch(`${API}/api/chat/flag`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ sessionId, question, reply: message.text }),
+      });
+      if (!res.ok) throw new Error("flag failed");
+    } catch {
+      flash("Could not flag that answer.");
+      return;
+    }
+    const next = messages.map((item, i) => (i === index ? { ...item, flagged: true } : item));
+    setMessages(next);
+    remember(sessionId, next);
+    flash("Flagged for review.");
   }
 
   function submit(event) {
@@ -730,6 +868,9 @@ function App() {
             <div className="account-menu">
               <button type="button" onClick={() => setMenu("profile")}>Profile</button>
               <button type="button" onClick={() => setMenu("settings")}>Settings</button>
+              {canReview(user) && (
+                <button type="button" onClick={() => setMenu("reviews")}>Reviews</button>
+              )}
               <button type="button" onClick={logout}>Log out</button>
             </div>
           )}
@@ -783,6 +924,27 @@ function App() {
                   {msg.imagePreview && <img className="shot" src={msg.imagePreview} alt="" />}
                   {msg.hadImage && !msg.imagePreview && <span className="image-note">Image</span>}
                   <MessageText text={msg.text} />
+                  {msg.role === "assistant" && (
+                    <div className="message-actions">
+                      {messageBlocks(msg.text).some((block) => block.type === "table") && (
+                        <button
+                          type="button"
+                          className="flag-btn"
+                          onClick={() => downloadExcel(msg.text, current?.title)}
+                        >
+                          Download Excel
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={`flag-btn${msg.flagged ? " done" : ""}`}
+                        onClick={() => flagAnswer(i)}
+                        disabled={msg.flagged}
+                      >
+                        {msg.flagged ? "Flagged for review" : "This number is wrong"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -798,7 +960,7 @@ function App() {
         </main>
 
         <form className="dock" onSubmit={submit}>
-          <p className="disclaimer">Answers use your DivOS data and can be wrong. Check important numbers.</p>
+          <p className="disclaimer">Read only. This chat cannot change DivOS data. Check important numbers.</p>
           {attachment && (
             <div className="attachment">
               <img src={attachment.preview} alt="" />
@@ -897,13 +1059,46 @@ function App() {
             onClick={() => {
               writeChats([], user?.email);
               setChats([]);
+              chatsReady.current = true;
+              saveRemote([], "");
               newChat();
               setMenu(null);
-              flash("Chats on this device were cleared.");
+              flash("Your chats were cleared.");
             }}
           >
-            Clear chats on this device
+            Clear my chats
           </button>
+        </Panel>
+      )}
+      {menu === "reviews" && (
+        <Panel title="Reviews" wide onClose={() => setMenu(null)}>
+          <h3 className="review-heading">Today’s official counts</h3>
+          {reviews?.daily?.[0] ? (
+            <p className="review-check">
+              Pending trucks {reviews.daily[0].pendingTrucks}. Orders today {reviews.daily[0].ordersToday}. On leave{" "}
+              {reviews.daily[0].onLeave}. Checked {new Date(reviews.daily[0].checkedAt).toLocaleString("en-IN")}.
+            </p>
+          ) : (
+            <p className="review-check">The daily check has not run yet.</p>
+          )}
+          <h3 className="review-heading">Flagged answers</h3>
+          {reviews?.flags?.length ? (
+            <ul className="review-list">
+              {reviews.flags.map((flag) => (
+                <li key={flag._id}>
+                  <strong>{flag.name || flag.email}</strong>
+                  <span>
+                    {flag.role} · {flag.createdAt ? new Date(flag.createdAt).toLocaleString("en-IN") : ""}
+                  </span>
+                  <p>{flag.question}</p>
+                  <p>{String(flag.reply || "").slice(0, 280)}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="review-check">No flagged answers yet.</p>
+          )}
+          <p className="review-note">Fix a wrong meaning by adding one line to knowledge.md.</p>
         </Panel>
       )}
     </div>
@@ -977,7 +1172,7 @@ function MessageText({ text }) {
   return blocks.map((block, index) => {
     if (block.type === "text") {
       return (
-        <p key={index} className="message-copy">
+        <p key={index} className={block.text.trimStart().startsWith("Source:") ? "message-copy source-line" : "message-copy"}>
           {block.text}
         </p>
       );
@@ -1011,11 +1206,11 @@ function MessageText({ text }) {
   });
 }
 
-function Panel({ title, onClose, children }) {
+function Panel({ title, onClose, children, wide }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal"
+        className={`modal${wide ? " wide" : ""}`}
         role="dialog"
         aria-label={title}
         onClick={(event) => event.stopPropagation()}

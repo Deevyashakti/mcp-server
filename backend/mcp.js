@@ -13,10 +13,16 @@ const { z } = require("zod");
 const dbTools = require("./db-tools");
 const auth = require("./auth");
 
-const server = new McpServer({
-  name: "divos-data",
-  version: "2.0.0",
-});
+const server = new McpServer(
+  {
+    name: "divos-data",
+    version: "2.0.0",
+  },
+  {
+    instructions:
+      "Read only. These tools cannot create, edit, update, delete, approve, or reject DivOS records. If the user asks to change data, refuse. Never say a record was changed.",
+  }
+);
 
 async function currentUser() {
   const email = process.env.MCP_USER_EMAIL;
@@ -27,14 +33,20 @@ async function currentUser() {
 }
 
 function register(name, description, shape, fn) {
-  server.tool(name, description, shape, async (input) => {
-    try {
-      const text = dbTools.toText(await fn(await currentUser(), input));
-      return { content: [{ type: "text", text }] };
-    } catch (err) {
-      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+  server.tool(
+    name,
+    description,
+    shape,
+    { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    async (input) => {
+      try {
+        const text = dbTools.toText(await fn(await currentUser(), input));
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
     }
-  });
+  );
 }
 
 const filter = z

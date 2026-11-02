@@ -12,33 +12,60 @@
 // `user` is the logged-in user's document from the users collection
 // (sensitive fields removed), so you can use any field on it, e.g. user.branchId.
 
+const office = require("./office");
+
+// Collections every logged-in office user can read. Applicant pay and login
+// records are not in this list.
+const OFFICE_COLLECTIONS = [
+  "truckplans",
+  "trucktrips",
+  "trucks",
+  "truckmasterconfigs",
+  "orders",
+  "orderclaims",
+  "clients",
+  "consignees",
+  "stockplannings",
+  "stockallocations",
+  "stockrecoveries",
+  "stockrecoverysfgs",
+  "pendingstocks",
+  "bulkpackings",
+  "bundlepackings",
+  "holidays",
+  "leavetypes",
+];
+
+function allow(names) {
+  return Object.fromEntries(names.map((name) => [name, true]));
+}
+
+// Role names are matched after lowercasing. "*" applies to every logged-in user.
+// Admin, Owner, and Function Head are full readers via ADMIN_ROLES, except blocked collections.
 const RULES = {
-  // Examples — replace with your real DivOS roles, collections and fields:
-  //
-  // dispatcher: {
-  //   truckplannings: (user) => ({ branchId: user.branchId }),
-  //   orders: (user) => ({ branchId: user.branchId }),
-  // },
-  // employee: {
-  //   leaves: (user) => ({ userId: user._id }),
-  // },
-  //
-  // "*" applies to every logged-in user:
-  // "*": {
-  //   holidays: true,
-  // },
+  "*": allow(OFFICE_COLLECTIONS),
+  "team member": {
+    leaverequests: (user) => ({ userId: user._id }),
+  },
+  "team leader": {
+    leaverequests: true,
+  },
+  hr: {
+    leaverequests: true,
+    people: true,
+  },
 };
 
 // Collections nobody reads through the chat, admins included.
 const BLOCKED_COLLECTIONS = new Set(
-  String(process.env.BLOCKED_COLLECTIONS || "sessions,tokens,otps,refreshtokens")
+  String(process.env.BLOCKED_COLLECTIONS || "sessions,tokens,otps,refreshtokens,loginsessions,assistantlogs,assistantchats")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
 );
 
 function adminRoles() {
-  return String(process.env.ADMIN_ROLES || "admin,superadmin")
+  return String(process.env.ADMIN_ROLES || "admin,owner,function head")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
@@ -62,7 +89,17 @@ function isAdmin(user) {
 // or null when the user may not read the collection at all.
 function filterFor(user, collection) {
   if (!user) return null;
-  if (BLOCKED_COLLECTIONS.has(collection.toLowerCase())) return null;
+  const name = collection.toLowerCase();
+  if (
+    name === office.LOGS ||
+    name === office.CHATS ||
+    name === "assistantchecks" ||
+    name === "assistantcheckpoints" ||
+    name === "assistantcheckpointwrites"
+  ) {
+    return null;
+  }
+  if (BLOCKED_COLLECTIONS.has(name)) return null;
   if (isAdmin(user)) return {};
 
   const filters = [];
